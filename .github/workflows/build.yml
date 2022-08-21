@@ -29,16 +29,13 @@ jobs:
       - name: Generate sha256 hash
         if: steps.build.outputs.skip != 'true'
         run: |
-          sha256sum geoip.db > geoip.db.sha256sum
-          sha256sum geosite.db > geosite.db.sha256sum
+          ls -lah *db | awk '{print $NF}' | while read f; do sha256sum $f > ${f}.sha256sum; done
 
       - name: Create a release
         run: |
           mkdir releases
-          mv geoip.db releases/
-          mv geosite.db releases/
-          mv geoip.db.sha256sum releases/
-          mv geosite.db.sha256sum releases/
+          mv *db releases/
+          mv *db.sha256sum releases/
 
       - name: Git push assets to "release" branch
         run: |

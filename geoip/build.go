@@ -19,7 +19,7 @@ import (
 	"strings"
 )
 
-func Build() ([]byte, error) {
+func Build(mini bool) ([]byte, error) {
 	// 下载 geoip 文件 （https://github.com/v2fly/domain-list-community）
 	geoip_dat_resp, err := http.Get("https://github.com/Loyalsoldier/v2ray-rules-dat/blob/release/geoip.dat?raw=true")
 	if err != nil {
@@ -68,6 +68,21 @@ func Build() ([]byte, error) {
 	//
 	for _, GeoIPEntry := range GeoIPList.Entry {
 		code := GeoIPEntry.CountryCode
+		if mini {
+			if len(code) <= 2 {
+				switch code {
+				case "CN":
+				case "TW":
+				case "HK":
+				case "MO":
+				case "US":
+				case "JP":
+				case "SG":
+				default:
+					continue
+				}
+			}
+		}
 		countryData := make([]*net.IPNet, 0)
 		for _, CIDR := range GeoIPEntry.Cidr {
 			_, IPNet, err := net.ParseCIDR(fmt.Sprintf("%s/%s", net.IP(CIDR.Ip).String(), strconv.Itoa(int(CIDR.Prefix))))

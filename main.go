@@ -23,7 +23,7 @@ func main() {
 	}
 	log.Println("geosite build ok")
 	//
-	geoipBytes, err := geoip.Build()
+	geoipBytes, err := geoip.Build(false)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -37,4 +37,19 @@ func main() {
 		log.Fatalln(err)
 	}
 	log.Println("geoip build ok")
+	//
+	geoipMiniBytes, err := geoip.Build(true)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	geoipMiniFile, err := os.Create(`geoip-mini.db`)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer geoipMiniFile.Close()
+	_, err = geoipMiniFile.Write(geoipMiniBytes)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Println("geoip mini build ok")
 }
