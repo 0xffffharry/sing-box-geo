@@ -12,15 +12,123 @@ import (
 	"github.com/v2fly/v2ray-core/v5/app/router/routercommon"
 	"google.golang.org/protobuf/proto"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-func Build(mini bool) ([]byte, error) {
-	// 下载 geoip 文件 （https://github.com/v2fly/domain-list-community）
+func Build(geoipMiniFile, geoipFile *os.File) error {
+	V2rayDatData, err := downloadV2rayDat()
+	if err != nil {
+		return err
+	}
+	log.Println("geoip: download V2rayDatData success")
+	// write geoip
+	geoip_data, err := buildGeoIP(
+		func() ([]string, map[string][]*net.IPNet, error) {
+			codes, dataMap := parseV2rayDat(V2rayDatData)
+			return codes, dataMap, nil
+		},
+		personalRules,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = geoipFile.Write(geoip_data)
+	if err != nil {
+		return err
+	}
+	log.Println("geoip: geoip write success")
+	// write geoip_mini
+	geoip_mini_data, err := buildGeoIP(
+		func() ([]string, map[string][]*net.IPNet, error) {
+			codes, dataMap := parseV2rayDatMini(V2rayDatData)
+			return codes, dataMap, nil
+		},
+		personalRules,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = geoipMiniFile.Write(geoip_mini_data)
+	if err != nil {
+		return err
+	}
+	log.Println("geoip: geoip_mini write success")
+	//
+	return nil
+}
+
+type AddFunc func() ([]string, map[string][]*net.IPNet, error)
+
+func buildGeoIP(addFunc ...AddFunc) ([]byte, error) {
+	if addFunc == nil || len(addFunc) == 0 {
+		return nil, errors.New("no add func")
+	}
+	allCodes := make([]string, 0)
+	countryMap := make(map[string][]*net.IPNet)
+	writer, err := mmdbwriter.New(mmdbwriter.Options{
+		DatabaseType:            "sing-geoip",
+		IPVersion:               6,
+		Languages:               []string{"de", "en", "es", "fr", "ja", "pt-BR", "ru", "zh-CN"},
+		RecordSize:              32,
+		Inserter:                inserter.ReplaceWith,
+		DisableIPv4Aliasing:     true,
+		IncludeReservedNetworks: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Println("geoip: add rules start")
+	for _, F := range addFunc {
+		codes, dataMap, err := F()
+		if err != nil {
+			log.Println(fmt.Sprintf("geoip: add func error: %s , continue...", err))
+			continue
+		}
+		for _, c := range codes {
+			if _, ok := countryMap[c]; !ok {
+				allCodes = append(allCodes, c)
+				countryMap[c] = dataMap[c]
+			}
+		}
+	}
+	log.Println("geoip: add rules success")
+	if len(allCodes) == 0 {
+		allCodes = make([]string, 0, len(countryMap))
+		for code := range countryMap {
+			allCodes = append(allCodes, code)
+		}
+	}
+	sort.Strings(allCodes)
+	codeMap := make(map[string]bool)
+	for _, code := range allCodes {
+		codeMap[code] = true
+	}
+	for code, data := range countryMap {
+		if codeMap[code] {
+			for _, item := range data {
+				err := writer.Insert(item, mmdbtype.String(code))
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	output := bytes.NewBuffer(nil)
+	_, err = writer.WriteTo(output)
+	if err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func downloadV2rayDat() (*routercommon.GeoIPList, error) {
+	// 下载 geoip 文件 （https://github.com/Loyalsoldier/v2ray-rules-dat）
 	geoip_dat_resp, err := http.Get("https://github.com/Loyalsoldier/v2ray-rules-dat/blob/release/geoip.dat?raw=true")
 	if err != nil {
 		return nil, err
@@ -51,36 +159,42 @@ func Build(mini bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return &GeoIPList, nil
+}
+
+func parseV2rayDat(list *routercommon.GeoIPList) ([]string, map[string][]*net.IPNet) {
 	allCodes := make([]string, 0)
 	countryMap := make(map[string][]*net.IPNet)
-	writer, err := mmdbwriter.New(mmdbwriter.Options{
-		DatabaseType:            "sing-geoip",
-		IPVersion:               6,
-		Languages:               []string{"de", "en", "es", "fr", "ja", "pt-BR", "ru", "zh-CN"},
-		RecordSize:              32,
-		Inserter:                inserter.ReplaceWith,
-		DisableIPv4Aliasing:     true,
-		IncludeReservedNetworks: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	//
-	for _, GeoIPEntry := range GeoIPList.Entry {
+	for _, GeoIPEntry := range list.Entry {
 		code := GeoIPEntry.CountryCode
-		if mini {
-			if len(code) <= 2 {
-				switch code {
-				case "CN":
-				case "TW":
-				case "HK":
-				case "MO":
-				case "US":
-				case "JP":
-				case "SG":
-				default:
-					continue
-				}
+		countryData := make([]*net.IPNet, 0)
+		for _, CIDR := range GeoIPEntry.Cidr {
+			_, IPNet, err := net.ParseCIDR(fmt.Sprintf("%s/%s", net.IP(CIDR.Ip).String(), strconv.Itoa(int(CIDR.Prefix))))
+			if err != nil {
+				continue
+			}
+			countryData = append(countryData, IPNet)
+		}
+		allCodes = append(allCodes, code)
+		countryMap[code] = countryData
+	}
+	return allCodes, countryMap
+}
+
+func parseV2rayDatMini(list *routercommon.GeoIPList) ([]string, map[string][]*net.IPNet) {
+	allCodes := make([]string, 0)
+	countryMap := make(map[string][]*net.IPNet)
+	for _, GeoIPEntry := range list.Entry {
+		code := GeoIPEntry.CountryCode
+		if len(code) <= 2 {
+			switch code {
+			case "CN":
+			case "TW":
+			case "HK":
+			case "MO":
+			case "US":
+			default:
+				continue
 			}
 		}
 		countryData := make([]*net.IPNet, 0)
@@ -94,6 +208,12 @@ func Build(mini bool) ([]byte, error) {
 		allCodes = append(allCodes, code)
 		countryMap[code] = countryData
 	}
+	return allCodes, countryMap
+}
+
+func personalRules() ([]string, map[string][]*net.IPNet, error) {
+	allCodes := make([]string, 0)
+	countryMap := make(map[string][]*net.IPNet)
 	// gdut
 	allCodes = append(allCodes, "GDUT")
 	gdutData := make([]*net.IPNet, 0)
@@ -106,12 +226,12 @@ func Build(mini bool) ([]byte, error) {
 	allCodes = append(allCodes, "CNCERNET")
 	cncernet4_resp, err := http.Get("https://gaoyifan.github.io/china-operator-ip/cernet.txt")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cncernet4, err := ioutil.ReadAll(cncernet4_resp.Body)
 	defer cncernet4_resp.Body.Close()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cncernet4Data := make([]*net.IPNet, 0)
 	for _, v := range strings.Split(string(cncernet4), "\n") {
@@ -123,12 +243,12 @@ func Build(mini bool) ([]byte, error) {
 	}
 	cncernet6_resp, err := http.Get("https://gaoyifan.github.io/china-operator-ip/cernet6.txt")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cncernet6, err := ioutil.ReadAll(cncernet6_resp.Body)
 	defer cncernet6_resp.Body.Close()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cncernet6Data := make([]*net.IPNet, 0)
 	for _, v := range strings.Split(string(cncernet6), "\n") {
@@ -140,32 +260,5 @@ func Build(mini bool) ([]byte, error) {
 	}
 	cncernetData := append(cncernet4Data, cncernet6Data...)
 	countryMap["CNCERNET"] = cncernetData
-	// 写入数据
-	if len(allCodes) == 0 {
-		allCodes = make([]string, 0, len(countryMap))
-		for code := range countryMap {
-			allCodes = append(allCodes, code)
-		}
-	}
-	sort.Strings(allCodes)
-	codeMap := make(map[string]bool)
-	for _, code := range allCodes {
-		codeMap[code] = true
-	}
-	for code, data := range countryMap {
-		if codeMap[code] {
-			for _, item := range data {
-				err := writer.Insert(item, mmdbtype.String(code))
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-	output := bytes.NewBuffer(nil)
-	_, err = writer.WriteTo(output)
-	if err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
+	return allCodes, countryMap, nil
 }

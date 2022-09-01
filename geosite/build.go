@@ -5,17 +5,75 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/sagernet/sing-box/common/geosite"
 	"github.com/sagernet/sing/common"
 	"github.com/v2fly/v2ray-core/v5/app/router/routercommon"
 	"google.golang.org/protobuf/proto"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
-func Build() ([]byte, error) {
-	// 下载 geosite 文件 （https://github.com/v2fly/domain-list-community）
+func Build(geositeFile *os.File) error {
+	V2rayDatData, err := downloadV2rayDat()
+	if err != nil {
+		return err
+	}
+	log.Println("geosite: download V2rayDatData success")
+	// write geosite
+	geosite_data, err := buildGeoSite(
+		func() (map[string][]geosite.Item, error) {
+			return parseV2rayDat(V2rayDatData), nil
+		},
+		personalRules,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = geositeFile.Write(geosite_data)
+	if err != nil {
+		return err
+	}
+	log.Println("geosite: geosite write success")
+	return nil
+}
+
+type AddFunc func() (map[string][]geosite.Item, error)
+
+func buildGeoSite(addFunc ...AddFunc) ([]byte, error) {
+	if addFunc == nil || len(addFunc) == 0 {
+		return nil, errors.New("no add func")
+	}
+	domainMap := make(map[string][]geosite.Item)
+	log.Println("geosite: add func start")
+	for _, F := range addFunc {
+		d, err := F()
+		if err != nil {
+			log.Println(fmt.Sprintf("geosite: add func error: %s , continue...", err))
+			continue
+		}
+		for k, v := range d {
+			if _, ok := domainMap[k]; ok {
+				domainMap[k] = append(domainMap[k], v...)
+			} else {
+				domainMap[k] = v
+			}
+		}
+	}
+	log.Println("geosite: add func success")
+	output := bytes.NewBuffer(nil)
+	err := geosite.Write(output, domainMap)
+	if err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func downloadV2rayDat() (*routercommon.GeoSiteList, error) {
+	// 下载 geosite 文件 （https://github.com/Loyalsoldier/v2ray-rules-dat）
 	geosite_dat_resp, err := http.Get("https://github.com/Loyalsoldier/v2ray-rules-dat/blob/release/geosite.dat?raw=true")
 	if err != nil {
 		return nil, err
@@ -46,9 +104,12 @@ func Build() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 类型转换
+	return &GeoSiteList, nil
+}
+
+func parseV2rayDat(list *routercommon.GeoSiteList) map[string][]geosite.Item {
 	domainMap := make(map[string][]geosite.Item)
-	for _, GeoSiteEntry := range GeoSiteList.Entry {
+	for _, GeoSiteEntry := range list.Entry {
 		domains := make([]geosite.Item, 0, len(GeoSiteEntry.Domain)*2)
 		for _, domain := range GeoSiteEntry.Domain {
 			switch domain.Type {
@@ -82,7 +143,11 @@ func Build() ([]byte, error) {
 		}
 		domainMap[strings.ToLower(GeoSiteEntry.CountryCode)] = common.Uniq(domains)
 	}
-	// 自定义规则
+	return domainMap
+}
+
+func personalRules() (map[string][]geosite.Item, error) {
+	domainMap := make(map[string][]geosite.Item)
 	// gdut
 	gdut_eduweb_resp, err := http.Get("https://raw.githubusercontent.com/yaotthaha/gdut-edu-rule/master/gdut-edu-rule-geosite-vpn.txt?raw=true")
 	if err != nil {
@@ -111,10 +176,5 @@ func Build() ([]byte, error) {
 		}
 	}
 	domainMap["gduteduweb"] = common.Uniq(gdut_eduweb_domains)
-	output := bytes.NewBuffer(nil)
-	err = geosite.Write(output, domainMap)
-	if err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
+	return domainMap, nil
 }
