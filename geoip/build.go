@@ -60,20 +60,18 @@ func buildGeoIP(addFunc ...AddFunc) ([]byte, error) {
 			continue
 		}
 		for code, data := range dataMap {
-			if _, ok := countryMap[code]; !ok {
-				countryMap[code] = dataMap[code]
+			codeLower := strings.ToLower(code)
+			if _, ok := countryMap[codeLower]; !ok {
+				countryMap[codeLower] = data
 			} else {
-				countryMap[code] = append(countryMap[code], data...)
+				countryMap[codeLower] = append(countryMap[codeLower], data...)
 			}
 		}
 	}
 	log.Println("geoip: add rules success")
 	allCodes := make([]string, 0)
-	if len(allCodes) == 0 {
-		allCodes = make([]string, 0, len(countryMap))
-		for code := range countryMap {
-			allCodes = append(allCodes, code)
-		}
+	for code := range countryMap {
+		allCodes = append(allCodes, code)
 	}
 	sort.Strings(allCodes)
 	writer, err := mmdbwriter.New(mmdbwriter.Options{
