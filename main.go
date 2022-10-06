@@ -18,21 +18,14 @@ func main() {
 		log.Fatalln(err)
 	}
 	log.Println("geosite build ok")
-	//
 	geoipFile, err := os.Create(`geoip.db`)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer geoipFile.Close()
-	geoipMiniFile, err := os.Create(`geoip-mini.db`)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer geoipMiniFile.Close()
-	err = geoip.Build(geoipMiniFile, geoipFile)
+	err = geoip.Build(geoipFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	log.Println("geoip build ok")
-	log.Println("geoip mini build ok")
 }
