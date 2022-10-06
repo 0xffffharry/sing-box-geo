@@ -217,6 +217,6 @@ func personalRules() (map[string][]geosite.Item, error) {
 			})
 		}
 	}
-	domainMap["gduteduweb"] = common.Uniq(gdut_eduweb_domains)
+	domainMap["gdut-eduweb"] = common.Uniq(gdut_eduweb_domains)
 	return domainMap, nil
 }

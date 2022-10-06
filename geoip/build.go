@@ -138,7 +138,6 @@ func downloadV2rayDat() (*routercommon.GeoIPList, error) {
 }
 
 func parseV2rayDat(list *routercommon.GeoIPList) map[string][]*net.IPNet {
-	allCodes := make([]string, 0)
 	countryMap := make(map[string][]*net.IPNet)
 	for _, GeoIPEntry := range list.Entry {
 		code := GeoIPEntry.CountryCode
@@ -150,25 +149,21 @@ func parseV2rayDat(list *routercommon.GeoIPList) map[string][]*net.IPNet {
 			}
 			countryData = append(countryData, IPNet)
 		}
-		allCodes = append(allCodes, code)
 		countryMap[code] = countryData
 	}
 	return countryMap
 }
 
 func personalRules() (map[string][]*net.IPNet, error) {
-	allCodes := make([]string, 0)
 	countryMap := make(map[string][]*net.IPNet)
 	// gdut
-	allCodes = append(allCodes, "GDUT")
 	gdutData := make([]*net.IPNet, 0)
 	_, IP1, _ := net.ParseCIDR("222.200.96.0/19")
 	_, IP2, _ := net.ParseCIDR("202.116.128.0/19")
 	_, IP3, _ := net.ParseCIDR("2001:da8:2018::/48")
 	gdutData = append(gdutData, IP1, IP2, IP3)
-	countryMap["GDUT"] = gdutData
+	countryMap["gdut"] = gdutData
 	// cn-cernet
-	allCodes = append(allCodes, "CNCERNET")
 	cncernet4_resp, err := http.Get("https://gaoyifan.github.io/china-operator-ip/cernet.txt")
 	if err != nil {
 		return nil, err
@@ -204,6 +199,6 @@ func personalRules() (map[string][]*net.IPNet, error) {
 		cncernet6Data = append(cncernet6Data, IPNet)
 	}
 	cncernetData := append(cncernet4Data, cncernet6Data...)
-	countryMap["CNCERNET"] = cncernetData
+	countryMap["cn-cernet"] = cncernetData
 	return countryMap, nil
 }
